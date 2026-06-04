@@ -1,7 +1,7 @@
 # 工程交接文档索引
 
 - 适用版本：`main` 分支
-- 最后校验：2026-05-16；`cargo check` 通过，`cargo test` 86 项通过
+- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
 - 关联源码：`README.md`、`src/`、`assets/configs/`、`docs/`
 
 本文档集面向工程交接与后续维护。帮助维护者快速搞清楚：
@@ -14,7 +14,7 @@
 ## 推荐阅读顺序
 
 1. [`README.md`](../README.md)：项目概览、操作、游戏内容、架构
-2. [`progress_and_todo.md`](progress_and_todo.md)：开发进度报告与 TODO 清单
+2. [`01_build_and_run.md`](01_build_and_run.md)：构建、运行、联调手册
 3. [`02_architecture.md`](02_architecture.md)：状态机、ECS 分层、数据流
 4. [`03_module_design.md`](03_module_design.md)：各模块职责与依赖
 5. [`04_api_and_data_model.md`](04_api_and_data_model.md)：内部接口契约
@@ -27,7 +27,6 @@
 | 文档 | 内容 | 适合谁 |
 |------|------|--------|
 | [`README.md`](../README.md) | 项目入口、游戏内容、架构概览 | 所有人 |
-| [`progress_and_todo.md`](progress_and_todo.md) | 已完成工作 + 对照设计文档的 TODO | 接手开发者 |
 | [`01_build_and_run.md`](01_build_and_run.md) | 构建、运行、联调手册 | 首次接手者 |
 | [`02_architecture.md`](02_architecture.md) | 总体架构、状态机、数据流 | 架构理解 |
 | [`03_module_design.md`](03_module_design.md) | 模块职责与依赖 | 开发维护 |
@@ -62,6 +61,6 @@
 
 - 主工程名：`block_city_adventure`
 - 关键依赖：Bevy 0.14.2、bevy_rapier2d 0.27、bevy_kira_audio 0.20、Lightyear 0.17.1
-- 源码文件：109 个 Rust 文件
-- 测试：86 项通过
+- 源码文件：110 个 Rust 文件
+- 测试：83 项通过
 - 复杂度热点：`src/coop/runtime.rs`、`src/gameplay/enemy/systems.rs`、`src/gameplay/session_core/mod.rs`、`src/ui/hud.rs`

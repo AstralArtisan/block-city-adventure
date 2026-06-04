@@ -1,7 +1,7 @@
 # 架构总览
 
-- 适用版本：当前工作树（branch `claude-playground`）
-- 最后校验：2026-04-11；`cargo check` 通过，`cargo test` 44 项通过
+- 适用版本：`main` 分支
+- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
 - 源码文件数：110 个 Rust 源文件
 - 关联源码：`src/main.rs`、`src/app.rs`、`src/states.rs`、`src/core/`、`src/data/`、`src/gameplay/`、`src/coop/`、`src/pvp/`、`src/ui/`
 - 实验性内容：包含。单机骨架稳定，联机部分仍为原型架构
@@ -157,6 +157,7 @@ flowchart LR
 - `DataPlugin` 在 `Loading` 状态下调用 `load_all_configs`
 - 目标是生成单一资源 `GameDataRegistry`
 - 若读取失败，会回退到 `default_registry()` 的默认值
+- 自 #9 数值配置化重构起，RON 是所有玩法数值的唯一真相源；`default_registry()` 仅作兜底，并由 `loaders_fallback_matches_shipped_ron_files` 测试锁定二者一致，防止源码与 RON 漂移
 
 ### 5.2 存档加载
 - `SavePlugin` 始终监听 `F5` / `F9`

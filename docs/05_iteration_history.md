@@ -1,8 +1,8 @@
 # 迭代经历与设计演化
 
-- 适用版本：当前工作树（HEAD `f86ad11f`）
-- 最后校验：2026-04-11；`cargo check` 通过，`cargo test` 44 项通过
-- 关联源码：`rust_game_codex_requirements.txt`、`git log`、`src/`、`docs/project_overview_and_coop_review.md`
+- 适用版本：`main` 分支（HEAD `a4b3f671`）
+- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
+- 关联源码：`git log`、`src/`、`docs/superpowers/specs/`（设计规格文档）
 - 实验性内容：包含。联机相关阶段记录的是“原型整合”而非稳定版本发布
 
 ## 1. 总览
@@ -999,6 +999,72 @@ Phase 3 内容由 Codex 实现（30+ 文件 + 新配置）。Claude 按用户指
 
 ---
 
+## 2026-05-19 测试模式：单机死亡满血复活
+
+**改动内容：**
+- 主菜单新增「测试模式」入口，开启 `TestMode` 资源（`src/core/test_mode.rs`）
+- 测试模式下玩家死亡不进 `GameOver`，原地满血复活并附带 2 秒无敌（复用 `InvincibilityTimer`）
+- 仅单机 `InGame` 生效，Coop 路径不受影响，改动高度局部化
+
+**目的与动机：**
+方便组员快速测试中后期内容（强化 / Boss / 事件），不必每次从头打。
+
+**已知问题 / 后续工作：**
+- 这是临时测试设施，正式发布前应按 `docs/test_mode_temp.md` 的指引整体移除。
+
+---
+
+## 2026-05-21 Charger 重做：冲撞机制 + 配置化（#8）
+
+**改动内容：**
+- Charger 行为重做：新增碰撞伤害、撞墙眩晕（1.5s）、提升冲刺距离、Windup 预警蓄力条与眩晕特效
+- 冲撞期间从通用近战分支拆出，不再生成红色 melee 命中框，避免双重判定
+- 新增 `ChargerConfig`（冲刺时长 / 速度倍率 / 撞墙眩晕 / 冷却 / 碰撞伤害倍率 / 击退），数值从硬编码提取到 `enemies.ron`
+- 平衡微调：`contact_damage_mult` 1.20→1.00，`contact_knockback` 320→220
+
+**目的与动机：**
+让 Charger 从「贴脸近战」变为有预警、有节奏的冲撞型威胁，提升战斗辨识度与公平性；同时把行为参数收口到 RON，便于后续调平衡。
+
+**关键决策：**
+- 新增 `ChargerWindupVisual` 纯视觉预警（无伤害），给玩家留出闪避窗口。
+
+---
+
+## 2026-05-25 数值配置化重构：所有玩法数值入 RON + design 校正（#9）
+
+**改动内容（大型重构，多 commit 合并）：**
+- **强化（Augment）**：`tuning.rs` 从 ~530 行手写 match 表瘦身到 ~290 行类型化包装；新增统一查询 API `GameDataRegistry::augment_param(id, stacks, key)` / `augment_param_or(..., default)`，`augments.ron` 成为唯一真相源
+- **终结技（Skill）**：`SkillConfig` 扩展 `damage_mult / knockback / aoe_radius / duration_s / tick_interval_s / projectile_* / status`，9 种终结技伤害 / AOE / 时长全部入 `skills.ron`（对齐 design §5.4）；WarCry / TimeRift 接入新 `PlayerBuff` 组件，FrostField 真正冻结 AOE 目标
+- **敌人 / Boss**：楼层成长曲线、敌人类型曲线、精英概率、每层怪物数、Floor 1 教学缓和移入 `game_balance.ron`；Boss 分层缩放与子核 HP 移入 `boss.ron`
+- **精英词缀**：词缀数值入 `elite_affixes.ron`（含 design 校正：Swift / Berserk / Vampiric / Shielded 行为对齐），并接通 Shielded 的 `immune_knockback` / `immune_freeze`
+- **商店 / 事件 / 掉落 / 升级**：重复购买涨价、刷新价、药水 / 折扣幅度、事件房 payload、击杀 XP 与掉落物数量、升级属性增量全部入 RON
+- **loaders 兜底同步**：`default_registry()` 与现行 RON 对齐，新增 `loaders_fallback_matches_shipped_ron_files` 测试防止再次漂移
+- **死代码清理**：移除 `RewardModifiers::bonus_projectile`、`Skill1Cooldown`、`ENERGY_SYSTEM_ENABLED`
+
+**目的与动机：**
+此前大量平衡数值散落在 Rust 源码（且 fallback 已与 RON 漂移，如 Floor 1 Boss HP 245 vs RON 330），违背「调数值改 RON」的项目约定。本轮把所有玩法平衡参数收口到 `assets/configs/*.ron`，让设计者无需重编译即可调参，并以测试锁定 fallback 与 RON 一致。
+
+**关键决策：**
+- 行为尽量「逐位保持」（bit-for-bit），仅在 commit 标注 `[design-align]` 处按 design.md 做有意校正
+- feel / timing 类参数（掉落物磁吸 / 寿命、攻击手感等）按用户决定保留为代码常量，不入 RON
+- 顺带修复多个潜伏 bug：升级攻速 / 冲刺 CD 被攻击重置、追踪弹 `turn_factor` 被误当角度、Scatter 吞掉额外弹、已满级强化 / 已装备技能仍进抽卡池
+
+**验证：**
+- `cargo test` 全通过（重构后 83 项）
+
+---
+
+## 2026-05-25 追踪弹重定向修复（#10）
+
+**改动内容：**
+- 为追踪弹（Homing 强化）新增可配置的 snap 吸附半径
+- 选目标时跳过本帧已命中的目标，避免反复锁定同一敌人
+
+**目的与动机：**
+修复追踪弹在密集敌群中「原地打转 / 反复命中同一目标」的手感问题，让其能正确转向新目标。
+
+---
+
 ## 2026-05-25 Claude PR 审核评论兜底
 
 **改动内容：**
@@ -1015,3 +1081,26 @@ PR10 的 Claude Code Review action 成功完成，但 PR 页面没有任何 Clau
 **验证：**
 - `git diff --check` 通过
 - `npx --yes js-yaml .github/workflows/claude-code-review.yml` 解析通过
+
+---
+
+## 2026-05-26 成就图标卡片（#11）
+
+**改动内容：**
+- 通过 `GameAssets` 加载 9 张成就图标贴图（`assets/textures/achievements/*.png`）
+- 成就菜单改为图标卡片渲染，区分已解锁 / 未解锁状态
+
+**目的与动机：**
+把纯文字成就列表升级为带图标的卡片，提升成就页的视觉表现与可读性。
+
+---
+
+## 2026-05-30 爆裂射击替换蓄力射击（#12）
+
+**改动内容：**
+- 移除远程蓄力射击（charged shot）机制
+- 将 `Piercing`（远程）强化重做为「爆炸弹」：远程弹命中后对附近敌人造成范围伤害 + 击退，三级递增爆炸范围 / 伤害（`augments.ron` params: `radius` / `damage` / `knockback`）
+- 新增爆炸半径 / 伤害比例 / 击退的配置与爆炸粒子特效
+
+**目的与动机：**
+蓄力射击操作收益不直观，替换为命中即爆的范围效果，强化远程 Build 的清群手感与正反馈。

@@ -1,7 +1,7 @@
 # 扩展与维护指南
 
-- 适用版本：当前工作树（branch `claude-playground`）
-- 最后校验：2026-04-11；结合当前模块结构、配置入口与联机实现整理
+- 适用版本：`main` 分支
+- 最后校验：2026-05-30；结合当前模块结构、配置入口与联机实现整理
 - 关联源码：`src/gameplay/`、`src/data/`、`src/coop/`、`src/pvp/`、`src/ui/`、`assets/configs/`
 - 实验性内容：包含。联机相关扩展项需要按原型架构审慎推进
 
@@ -85,18 +85,21 @@
 ### 5.1 典型触点
 - `src/gameplay/augment/data.rs`
 - `src/gameplay/augment/effects.rs`
+- `src/gameplay/augment/tuning.rs`
 - `assets/configs/augments.ron`
 
 ### 5.2 推荐步骤
 1. 在 `AugmentId` 枚举中新增变体。
-2. 在 `augments.ron` 中补充名称、描述、稀有度、槽位。
-3. 在 `effects.rs` 中实现运行时效果系统。
+2. 在 `augments.ron` 中补充名称、描述、稀有度、槽位，并在各等级 `params` 中填入数值（伤害倍率、半径、`turn_factor` 等）。
+3. 在 `effects.rs` 中实现运行时效果系统；数值一律经 `GameDataRegistry::augment_param(id, stacks, key)` / `augment_param_or(...)` 读取，必要时在 `tuning.rs` 加一个类型化薄包装函数——**不要在源码硬编码平衡数值**。
 4. 注意效果系统的执行顺序约束（`.before()` / `.after()` 与 combat 系统协调）。
 5. 检查增强选择 UI（`augment_select.rs`）是否能正确展示。
+6. 若强化可升满级，确认满级后会从奖励 / 事件抽卡池正确剔除（`is_maxed` 过滤）。
 
 ### 5.3 常见遗漏
 - 只加了枚举和配置，没在 `effects.rs` 中实现效果
 - 忘了设置稀有度权重，导致永远不会被选中
+- 在源码里硬编码数值而非走 `augments.ron::params`——会被 `loaders_fallback_matches_shipped_ron_files` 之外的人误改，且无法不重编译调参
 
 ## 6. `Curse`（历史快照）
 

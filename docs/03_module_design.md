@@ -1,7 +1,7 @@
 # 模块设计说明
 
-- 适用版本：当前工作树（branch `claude-playground`）
-- 最后校验：2026-04-11；`cargo check` 通过，`cargo test` 44 项通过
+- 适用版本：`main` 分支
+- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
 - 源码文件数：110 个 Rust 源文件
 - 关联源码：`src/core/`、`src/data/`、`src/gameplay/`、`src/coop/`、`src/pvp/`、`src/ui/`、`src/utils/`
 - 实验性内容：包含。联机模块与部分 UI/规则层仍在持续收敛
@@ -268,7 +268,8 @@
 
 - 增强系统（被动能力），30 种增强分为近战/远程/移动/通用四类，三级稀有度（Common/Elite/Legendary）
 - `data.rs`：`AugmentId` 枚举（30 种）、`AugmentRarity`、`AugmentSlot`、增强元数据
-- `effects.rs`：每种增强的运行时效果实现（反弹、追踪弹、连锁闪电、荆棘、冰冻、不死鸟等）
+- `effects.rs`：每种增强的运行时效果实现（反弹、追踪弹、连锁闪电、荆棘、冰冻、不死鸟、爆炸弹等）
+- `tuning.rs`：类型化薄包装层，统一经 `GameDataRegistry::augment_param` 从 `augments.ron::params` 取数值（#9 起不再维护手写 match 表）
 
 设计要点：
 
@@ -286,9 +287,9 @@
 ### 4.14 `skills/`
 职责：
 
-- 4 种主动技能：剑气斩（SwordArc）、标记猎杀（MarkedHunt）、闪电冲刺（LightningDash）、遗物主动（Relic）
-- `slots.rs`：技能槽位管理（`SkillSlots` 组件，4 槽位解锁状态）
-- `execute.rs`：技能释放逻辑
+- 9 种终结技：裂地斩 / 剑舞 / 处刑之刃 / 弹幕倾泻 / 冰晶领域 / 天降陨石 / 战吼 / 吸血 / 时空裂隙（`SkillType` 枚举），装入 4 个槽位（数字键 1-4）
+- `slots.rs`：技能槽位管理（`SkillSlots` 组件，4 槽位解锁状态，`equipped()` 供抽卡去重）
+- `execute.rs`：技能释放逻辑，伤害 / AOE / 时长 / buff 全部从 `skills.ron` 读取
 
 设计要点：
 
