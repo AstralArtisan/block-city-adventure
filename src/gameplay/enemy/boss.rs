@@ -76,7 +76,9 @@ pub fn boss_attack_patterns(
 ) {
     let coop_hp_mult = if coop_config
         .as_deref()
-        .map(|value| value.mode == NetMode::Host && !coop_players.is_empty())
+        .map(|value| {
+            matches!(value.mode, NetMode::Host | NetMode::Server) && !coop_players.is_empty()
+        })
         .unwrap_or(false)
     {
         2.0

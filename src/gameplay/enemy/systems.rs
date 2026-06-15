@@ -352,7 +352,9 @@ pub fn room_entry_spawner(
     let base_enemy_count = get_floor_enemy_count(&data, floor_number);
     let coop_host_active = coop_config
         .as_deref()
-        .map(|value| value.mode == NetMode::Host && !coop_players.is_empty())
+        .map(|value| {
+            matches!(value.mode, NetMode::Host | NetMode::Server) && !coop_players.is_empty()
+        })
         .unwrap_or(false);
     let coop_hp_mult = if coop_host_active { 2.0 } else { 1.0 };
     let room_type = if coop_host_active && room.room_type == RoomType::Event {
@@ -1343,7 +1345,9 @@ fn summoner_summon_system(
     let floor_multiplier = get_floor_difficulty_multiplier(&data, floor_number);
     let coop_hp_mult = if coop_config
         .as_deref()
-        .map(|value| value.mode == NetMode::Host && !coop_players.is_empty())
+        .map(|value| {
+            matches!(value.mode, NetMode::Host | NetMode::Server) && !coop_players.is_empty()
+        })
         .unwrap_or(false)
     {
         2.0
@@ -1442,7 +1446,9 @@ fn elite_splitting_system(
     let floor_multiplier = get_floor_difficulty_multiplier(&data, floor_number);
     let coop_hp_mult = if coop_config
         .as_deref()
-        .map(|value| value.mode == NetMode::Host && !coop_players.is_empty())
+        .map(|value| {
+            matches!(value.mode, NetMode::Host | NetMode::Server) && !coop_players.is_empty()
+        })
         .unwrap_or(false)
     {
         2.0
@@ -2168,7 +2174,7 @@ pub fn enemy_death_system(
         let room = layout.room(current_room.0).unwrap();
         let coop_host_active = coop_config
             .as_deref()
-            .map(|value| value.mode == NetMode::Host)
+            .map(|value| matches!(value.mode, NetMode::Host | NetMode::Server))
             .unwrap_or(false);
         let room_type = if coop_host_active && room.room_type == RoomType::Event {
             RoomType::Normal

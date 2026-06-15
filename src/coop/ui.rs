@@ -34,8 +34,9 @@ use super::components::{
 };
 use super::net::{
     COOP_PORT, CoopCommandMessage, CoopExitDestination, CoopExitRequest, CoopNetConfig,
-    CoopNetState, CoopSessionFlow, NetMode, begin_coop_lobby_session, normalize_coop_host_ip,
-    queue_command, queue_exit_request, reset_coop_network,
+    CoopNetState, CoopSessionFlow, NetMode, begin_coop_lobby_session, configured_client_id,
+    normalize_coop_host_ip, queue_command, queue_exit_request, reset_coop_network,
+    slot_for_client_id,
 };
 
 const REMOTE_BAR_WIDTH: f32 = 34.0;
@@ -365,6 +366,7 @@ pub fn coop_menu_input_system(
         Some(CoopMenuAction::Host) => {
             config.mode = NetMode::Host;
             config.host_ip.clear();
+            config.client_id = super::net::HOST_CLIENT_ID;
             match begin_coop_lobby_session(&config, &mut net, &mut flow) {
                 Ok(()) => {
                     next.set(AppState::CoopLobby);
@@ -381,6 +383,7 @@ pub fn coop_menu_input_system(
                     Ok(host_ip) => {
                         config.mode = NetMode::Client;
                         config.host_ip = host_ip.clone();
+                        config.client_id = super::net::REMOTE_CLIENT_ID;
                         ip.ip = host_ip;
                         match begin_coop_lobby_session(&config, &mut net, &mut flow) {
                             Ok(()) => {
@@ -521,6 +524,18 @@ pub fn coop_lobby_ui_system(
                     "等待加入"
                 },
             ),
+            NetMode::Server => format!(
+                "Session armed: {}\nP1 client: {}\nP2 client: {}",
+                session_armed,
+                coop_connection_word(
+                    net.connected_clients
+                        .contains(&super::net::host_client_id())
+                ),
+                coop_connection_word(
+                    net.connected_clients
+                        .contains(&super::net::remote_client_id())
+                ),
+            ),
             NetMode::Client => format!(
                 "会话已就绪：{}\n目标主机：{}\n连接状态：{}",
                 session_armed,
@@ -546,6 +561,15 @@ pub fn coop_lobby_ui_system(
                     share_ip, COOP_PORT
                 )
             }
+            NetMode::Server => {
+                let share_ip = best_effort_host_share_ip()
+                    .map(|ip| format!("Server IPv4: {}", ip))
+                    .unwrap_or_else(|| "Server IPv4:".to_string());
+                format!(
+                    "{}\nUDP {}. Start clients with --coop-client <ip> --client-id 1 and --client-id 2.",
+                    share_ip, COOP_PORT
+                )
+            }
             NetMode::Client => format!(
                 "正在连接主机 {}\n端口 {} 固定不变，仅接受纯 IPv4 地址。",
                 config.host_ip, COOP_PORT
@@ -563,6 +587,19 @@ pub fn coop_lobby_ui_system(
                     "会话已就绪，双方同步完成后对局将自动开始。".to_string()
                 }
                 NetMode::Host => "等待队友加入，请分享局域网 IPv4（不含端口）。".to_string(),
+                NetMode::Server
+                    if net
+                        .connected_clients
+                        .contains(&super::net::host_client_id())
+                        && net
+                            .connected_clients
+                            .contains(&super::net::remote_client_id()) =>
+                {
+                    "Two clients connected. Match will start automatically.".to_string()
+                }
+                NetMode::Server => {
+                    "Waiting for two clients: client id 1 and client id 2.".to_string()
+                }
                 NetMode::Client if net.connected => {
                     "已连接主机，等待会话状态与地图复制完成。".to_string()
                 }
@@ -775,7 +812,7 @@ pub fn ensure_local_control_marker(
         With<Player>,
     >,
 ) {
-    let local_slot = slot_for_mode(config.mode);
+    let local_slot = slot_for_config(&config);
     let preferred_client_entity = if config.mode == NetMode::Client {
         player_q
             .iter()
@@ -806,6 +843,7 @@ pub fn ensure_local_control_marker(
         &player_q
     {
         let should_control = match config.mode {
+            NetMode::Server => false,
             NetMode::Host => {
                 replicated.is_none()
                     && coop_participant.is_some()
@@ -848,7 +886,7 @@ pub fn filter_replicated_player_duplicates(
         return;
     }
 
-    let local_slot = slot_for_mode(config.mode);
+    let local_slot = slot_for_config(&config);
     let mut best_by_slot = [None; 2];
     let mut best_score_by_slot = [i32::MIN; 2];
 
@@ -890,7 +928,7 @@ pub fn sync_host_authority_visibility(
         Without<Door>,
     >,
 ) {
-    if config.mode != NetMode::Host {
+    if !matches!(config.mode, NetMode::Host | NetMode::Server) {
         return;
     }
 
@@ -1375,7 +1413,7 @@ pub fn update_replicated_door_visuals(
         .unwrap_or(crate::states::RoomState::Idle);
 
     for (door, mut sprite, mut visibility) in &mut door_q {
-        let next_visibility = if config.mode == NetMode::Host {
+        let next_visibility = if matches!(config.mode, NetMode::Host | NetMode::Server) {
             Visibility::Hidden
         } else if door.active {
             Visibility::Inherited
@@ -1396,7 +1434,7 @@ pub fn update_replicated_door_visuals(
     }
 
     for (label, mut text, mut visibility) in &mut label_q {
-        let next = if config.mode == NetMode::Host {
+        let next = if matches!(config.mode, NetMode::Host | NetMode::Server) {
             None
         } else {
             session.and_then(|value| {
@@ -1476,11 +1514,11 @@ pub fn update_coop_overlay(
         (With<Button>, Without<CoopModalShade>),
     >,
 ) {
-    let slot = slot_for_mode(config.mode);
+    let slot = slot_for_config(&config);
     let session = session_q.get_single().ok();
     let view = coop_build_modal_view(session, slot);
     let summary_value = coop_status_summary(config.mode, &net, session);
-    let players_value = coop_status_players(config.mode, &player_q);
+    let players_value = coop_status_players(&config, &player_q);
     let detail_value = coop_status_detail(session, slot);
     let hint_value = coop_status_hint(session).to_string();
 
@@ -1568,7 +1606,7 @@ pub fn handle_coop_overlay_input(
     mut flow: ResMut<CoopSessionFlow>,
     session_q: Query<&CoopSessionState, With<Replicated>>,
 ) {
-    let slot = slot_for_mode(config.mode);
+    let slot = slot_for_config(&config);
     let mut action = None;
     for (interaction, state) in &button_q {
         if *interaction == Interaction::Pressed && state.enabled {
@@ -1805,6 +1843,7 @@ fn coop_bool_word(value: bool) -> &'static str {
 
 fn coop_mode_label(mode: NetMode) -> &'static str {
     match mode {
+        NetMode::Server => "服务器",
         NetMode::Host => "房主",
         NetMode::Client => "客户端",
         NetMode::None => "未连接",
@@ -1829,6 +1868,19 @@ fn coop_status_summary(
     session: Option<&CoopSessionState>,
 ) -> String {
     let connection = match mode {
+        NetMode::Server => {
+            if net
+                .connected_clients
+                .contains(&super::net::host_client_id())
+                && net
+                    .connected_clients
+                    .contains(&super::net::remote_client_id())
+            {
+                "两个客户端已连接"
+            } else {
+                "等待两个客户端"
+            }
+        }
         NetMode::Host => {
             if net.remote_connected {
                 "双方已连接"
@@ -1881,7 +1933,7 @@ fn coop_status_detail(session: Option<&CoopSessionState>, slot: PlayerSlot) -> S
 }
 
 fn coop_status_players(
-    mode: NetMode,
+    config: &CoopNetConfig,
     player_q: &Query<
         (
             &PlayerSlot,
@@ -1894,7 +1946,8 @@ fn coop_status_players(
         With<Player>,
     >,
 ) -> String {
-    let local_slot = slot_for_mode(mode);
+    let mode = config.mode;
+    let local_slot = slot_for_config(config);
     let teammate_slot = coop_other_slot(local_slot);
 
     format!(
@@ -1902,18 +1955,19 @@ fn coop_status_players(
         coop_format_slot_status(
             "我方",
             local_slot,
-            coop_slot_snapshot(mode, local_slot, player_q)
+            coop_slot_snapshot(mode, local_slot, local_slot, player_q)
         ),
         coop_format_slot_status(
             "队友",
             teammate_slot,
-            coop_slot_snapshot(mode, teammate_slot, player_q)
+            coop_slot_snapshot(mode, local_slot, teammate_slot, player_q)
         ),
     )
 }
 
 fn coop_slot_snapshot(
     mode: NetMode,
+    local_slot: PlayerSlot,
     target: PlayerSlot,
     player_q: &Query<
         (
@@ -1927,7 +1981,6 @@ fn coop_slot_snapshot(
         With<Player>,
     >,
 ) -> Option<(f32, f32, bool)> {
-    let local_slot = slot_for_mode(mode);
     let mut best_score = i32::MIN;
     let mut best = None;
 
@@ -1942,7 +1995,11 @@ fn coop_slot_snapshot(
         }
         if target == local_slot {
             match mode {
-                NetMode::Host if coop_participant.is_some() && replicated.is_none() => score += 80,
+                NetMode::Host | NetMode::Server
+                    if coop_participant.is_some() && replicated.is_none() =>
+                {
+                    score += 80
+                }
                 NetMode::Client if replicated.is_some() => score += 80,
                 _ => {}
             }
@@ -2221,6 +2278,13 @@ fn coop_door_status_detail(session: &CoopSessionState, slot: PlayerSlot) -> Stri
             coop_direction_brief_label(option),
             coop_room_type_brief_label(option.room_type),
             status
+        ));
+    }
+
+    if my_choice.is_some() ^ teammate_choice.is_some() {
+        lines.push(format!(
+            "Confirm timeout: {:.1}s",
+            session.door_choice.input_timeout_s.max(0.0)
         ));
     }
 
@@ -2633,8 +2697,16 @@ fn coop_player_is_alive(ghost: Option<GhostState>, health: Option<&Health>) -> b
 
 fn slot_for_mode(mode: NetMode) -> PlayerSlot {
     match mode {
-        NetMode::Host | NetMode::None => PlayerSlot::P1,
+        NetMode::Server | NetMode::Host | NetMode::None => PlayerSlot::P1,
         NetMode::Client => PlayerSlot::P2,
+    }
+}
+
+fn slot_for_config(config: &CoopNetConfig) -> PlayerSlot {
+    if config.mode == NetMode::Client {
+        slot_for_client_id(configured_client_id(config)).unwrap_or(PlayerSlot::P2)
+    } else {
+        slot_for_mode(config.mode)
     }
 }
 

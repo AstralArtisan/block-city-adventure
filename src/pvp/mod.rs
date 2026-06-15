@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use crate::states::AppState;
 
 pub struct PvpPlugin;
+pub struct HeadlessPvpPlugin;
 
 impl Plugin for PvpPlugin {
     fn build(&self, app: &mut App) {
@@ -51,16 +52,20 @@ impl Plugin for PvpPlugin {
                 (
                     net::pvp_net_tick_system,
                     systems::pvp_overlay_input_system,
-                    systems::pvp_client_local_prediction_system,
-                    systems::pvp_host_simulation_system,
+                    systems::pvp_client_local_prediction_system
+                        .after(crate::core::input::collect_player_input),
+                    systems::pvp_host_simulation_system
+                        .after(crate::core::input::collect_player_input),
                     systems::pvp_client_apply_state_system,
                     systems::pvp_client_interpolate_players_system,
-                    systems::pvp_send_local_input_system,
+                    systems::pvp_send_local_input_system
+                        .after(crate::core::input::collect_player_input),
                     systems::pvp_update_player_visuals_system,
                     systems::pvp_update_hud_system,
                     systems::update_pvp_overlay_ui_system,
                     systems::pvp_bullet_visual_system,
                     systems::pvp_bullet_visual_system_move_and_despawn,
+                    crate::gameplay::player::combat::update_melee_slash_effects,
                 )
                     .run_if(in_state(AppState::PvpGame)),
             )
@@ -71,5 +76,28 @@ impl Plugin for PvpPlugin {
                 ui::pvp_result_input_system.run_if(in_state(AppState::PvpResult)),
             )
             .add_systems(OnExit(AppState::PvpResult), ui::cleanup_pvp_result);
+    }
+}
+
+impl Plugin for HeadlessPvpPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<net::PvpNetConfig>()
+            .init_resource::<net::PvpNetState>()
+            .init_resource::<systems::PvpMatchState>()
+            .init_resource::<systems::PvpOverlayState>()
+            .add_systems(
+                Update,
+                net::pvp_net_tick_system.run_if(in_state(AppState::PvpLobby)),
+            )
+            .add_systems(OnEnter(AppState::PvpGame), systems::setup_pvp_headless_game)
+            .add_systems(
+                Update,
+                (
+                    net::pvp_net_tick_system,
+                    systems::pvp_host_simulation_system,
+                )
+                    .run_if(in_state(AppState::PvpGame)),
+            )
+            .add_systems(OnExit(AppState::PvpGame), systems::cleanup_pvp_world);
     }
 }
