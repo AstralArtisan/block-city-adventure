@@ -706,7 +706,7 @@ fn connect_room_form(
         return;
     }
 
-    let mode = form.target_mode.unwrap_or_else(|| {
+    let mode = form.target_mode.unwrap_or({
         if port == PVP_PORT {
             MultiplayerTargetMode::Pvp
         } else {

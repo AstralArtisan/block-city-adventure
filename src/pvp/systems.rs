@@ -14,6 +14,7 @@ use super::net::{
 };
 
 const PVP_PLAYER_SIZE: Vec2 = Vec2::new(54.0, 54.0);
+const PVP_PLAYER_MAX_HP: f32 = 100.0;
 const PVP_MOVE_SPEED: f32 = 310.0;
 const PVP_MELEE_RANGE: f32 = 118.0;
 const PVP_MELEE_DAMAGE: f32 = 22.0;
@@ -182,14 +183,14 @@ fn spawn_headless_player(commands: &mut Commands, id: u8, pos: Vec2) -> Entity {
             GlobalTransform::default(),
             Velocity::default(),
             Health {
-                current: 100.0,
-                max: 100.0,
+                current: PVP_PLAYER_MAX_HP,
+                max: PVP_PLAYER_MAX_HP,
             },
             PvpLives::default(),
             PvpCooldowns::new(),
             PvpNetTarget {
                 pos,
-                hp: 100.0,
+                hp: PVP_PLAYER_MAX_HP,
                 lives: 3,
             },
             PvpMeleeFlash::default(),
@@ -334,14 +335,14 @@ fn spawn_one_player(
             PvpPlayerId(id),
             Velocity::default(),
             Health {
-                current: 100.0,
-                max: 100.0,
+                current: PVP_PLAYER_MAX_HP,
+                max: PVP_PLAYER_MAX_HP,
             },
             PvpLives::default(),
             PvpCooldowns::new(),
             PvpNetTarget {
                 pos,
-                hp: 100.0,
+                hp: PVP_PLAYER_MAX_HP,
                 lives: 3,
             },
             PvpMeleeFlash::default(),
@@ -1049,7 +1050,6 @@ fn spawn_melee_visual(
                 translation: (origin + dir * (reach * 0.42)).extend(PVP_EFFECT_Z),
                 rotation: Quat::from_rotation_z(angle),
                 scale: Vec3::ONE,
-                ..default()
             },
             sprite: Sprite {
                 color: pvp_player_color(shooter_id, true).with_alpha(0.92),

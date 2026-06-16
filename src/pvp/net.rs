@@ -76,6 +76,15 @@ pub struct PvpInputMsg {
     pub aim: (f32, f32),
 }
 
+impl PvpInputMsg {
+    fn has_finite_vectors(self) -> bool {
+        self.move_axis.0.is_finite()
+            && self.move_axis.1.is_finite()
+            && self.aim.0.is_finite()
+            && self.aim.1.is_finite()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct PvpPlayerStateMsg {
     pub id: u8,
@@ -324,6 +333,9 @@ pub fn pvp_net_tick_system(
                 }
             }
             PvpMsg::Input(input) => {
+                if !input.has_finite_vectors() {
+                    continue;
+                }
                 if config.mode == NetMode::Server {
                     if let Some(id) = peer_id_for_addr(&net, from)
                         && let Some(idx) = peer_index_for_id(id)

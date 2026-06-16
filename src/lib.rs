@@ -61,7 +61,7 @@ pub fn run_dedicated_server() {
 
 fn primary_window_settings() -> Window {
     Window {
-        title: "Block City Adventure".to_string(),
+        title: "勇闯方块城".to_string(),
         mode: WindowMode::BorderlessFullscreen,
         resolution: (WINDOW_WIDTH, WINDOW_HEIGHT).into(),
         resizable: true,

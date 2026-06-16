@@ -129,7 +129,7 @@ impl LocalNetDebugConfig {
         let save_suffix = env::var("LOCAL_NET_DEBUG_SAVE_SUFFIX")
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| cli.save_suffix)
+            .or(cli.save_suffix)
             .or_else(|| {
                 Some(format!(
                     "{}_{}",
