@@ -9,7 +9,7 @@ use crate::core::achievements::AchievementId;
 use crate::gameplay::enemy::components::{BossArchetype, EnemyType};
 use crate::states::AppState;
 
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Default)]
 pub struct GameAssets {
     pub font: Handle<Font>,
     pub textures: TextureHandles,
@@ -44,6 +44,8 @@ pub struct AudioHandles {
 
 pub struct AssetsPlugin;
 
+pub struct PlaceholderAssetsPlugin;
+
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::Loading), load_game_assets)
@@ -51,6 +53,12 @@ impl Plugin for AssetsPlugin {
                 Update,
                 check_assets_ready.run_if(in_state(AppState::Loading)),
             );
+    }
+}
+
+impl Plugin for PlaceholderAssetsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<GameAssets>();
     }
 }
 

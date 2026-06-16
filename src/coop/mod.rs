@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use crate::states::AppState;
 
 pub struct CoopPlugin;
+pub struct HeadlessCoopPlugin;
 
 impl Plugin for CoopPlugin {
     fn build(&self, app: &mut App) {
@@ -50,6 +51,13 @@ impl Plugin for CoopPlugin {
                     .run_if(in_state(AppState::CoopGame)),
             )
             .add_systems(OnExit(AppState::CoopGame), ui::cleanup_coop_game_ui)
+            .add_systems(OnEnter(AppState::MainMenu), runtime::reset_coop_runtime);
+    }
+}
+
+impl Plugin for HeadlessCoopPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((net::CoopLightyearPlugin, runtime::CoopRuntimePlugin))
             .add_systems(OnEnter(AppState::MainMenu), runtime::reset_coop_runtime);
     }
 }

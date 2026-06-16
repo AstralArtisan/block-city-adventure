@@ -15,6 +15,7 @@ pub mod skill_select;
 pub mod tooltip;
 pub mod tutorial;
 pub mod widgets;
+pub mod window_controls;
 
 use bevy::prelude::*;
 
@@ -22,6 +23,7 @@ use crate::gameplay::effects::screen_flash::clear_screen_flash;
 use crate::states::{AppState, GamePhase};
 
 pub struct UiPlugin;
+pub struct HeadlessUiSupportPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
@@ -32,6 +34,7 @@ impl Plugin for UiPlugin {
             .add_plugins(tutorial::TutorialPlugin)
             .add_plugins(tooltip::TooltipPlugin)
             .init_resource::<menu::MainMenuScreen>()
+            .init_resource::<window_controls::WindowControlState>()
             .add_systems(
                 Update,
                 (
@@ -39,6 +42,8 @@ impl Plugin for UiPlugin {
                     cursor::sync_window_cursor_visibility,
                     cursor::update_custom_cursor,
                     cursor::update_crosshair,
+                    window_controls::ensure_window_controls,
+                    window_controls::window_control_button_system,
                 ),
             )
             .add_systems(OnEnter(AppState::MainMenu), menu::setup_main_menu)
@@ -170,5 +175,18 @@ impl Plugin for UiPlugin {
                 game_over::end_screen_input_system
                     .run_if(in_state(GamePhase::GameOver).or_else(in_state(GamePhase::Victory))),
             );
+    }
+}
+
+impl Plugin for HeadlessUiSupportPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_event::<skill_select::SkillEquippedEvent>()
+            .add_event::<skill_select::SkillEquipCancelledEvent>()
+            .add_event::<feedback::UiFeedbackEvent>()
+            .add_event::<tutorial::TutorialNotification>()
+            .init_resource::<tutorial::TutorialFlags>()
+            .init_resource::<augment_select::AugmentChoices>()
+            .init_resource::<skill_select::SkillChoices>()
+            .init_resource::<levelup_select::LevelUpChoices>();
     }
 }

@@ -198,6 +198,7 @@ pub struct DoorChoiceState {
     pub options: Vec<CoopDoorOption>,
     pub p1_choice: Option<u8>,
     pub p2_choice: Option<u8>,
+    pub input_timeout_s: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

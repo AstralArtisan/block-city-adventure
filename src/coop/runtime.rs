@@ -55,13 +55,16 @@ use super::components::{
 use super::net::{
     CoopCommandMessage, CoopExitDestination, CoopExitRequest, CoopNetConfig, CoopNetState,
     CoopSessionFlow, NetMode, build_input_state, build_player_replication, build_replicate_all,
-    clear_coop_network_runtime, host_client_id, is_coop_authority, latest_input_for,
-    queue_exit_request, remote_client_id, take_exit_request, take_received_commands,
+    clear_coop_network_runtime, client_id_for_slot, host_client_id, is_coop_authority,
+    latest_input_for, queue_exit_request, remote_client_id, take_exit_request,
+    take_received_commands,
 };
 
 const DOOR_INTERACT_RANGE: f32 = 76.0;
 const REVIVE_HEALTH_FRACTION: f32 = 0.5;
+const COOP_DOOR_CONFIRM_TIMEOUT_S: f32 = 2.0;
 const COOP_RPS_INPUT_TIMEOUT_S: f32 = 12.0;
+const COOP_INPUT_DISCONNECT_TIMEOUT_FRAMES: u32 = 300;
 
 fn normalize_coop_room_type(room_type: RoomType) -> RoomType {
     if room_type == RoomType::Event {
@@ -242,8 +245,11 @@ fn process_pending_exit_request(
     if net.server_started {
         commands.stop_server();
     }
+    let should_rearm_dedicated_server = config.mode == NetMode::Server
+        && request.preserve_mode
+        && request.destination == CoopExitDestination::Lobby;
     clear_coop_network_runtime(&mut net);
-    flow.pending_game_entry = false;
+    flow.pending_game_entry = should_rearm_dedicated_server;
     flow.pending_exit = None;
 
     if request.preserve_mode {
@@ -252,6 +258,7 @@ fn process_pending_exit_request(
         flow.lobby_notice.clear();
         config.mode = NetMode::None;
         config.host_ip.clear();
+        config.client_id = 0;
     }
 
     next_state.set(match request.destination {
@@ -271,12 +278,15 @@ fn host_bootstrap_match(
     mut runtime: ResMut<CoopRuntimeState>,
     existing_players: Query<(), With<CoopParticipant>>,
 ) {
-    if config.mode != NetMode::Host
-        || runtime.bootstrapped
-        || !net.local_connected
-        || !net.remote_connected
-        || existing_players.iter().next().is_some()
-    {
+    let players_connected = match config.mode {
+        NetMode::Host => net.local_connected && net.remote_connected,
+        NetMode::Server => {
+            net.connected_clients.contains(&host_client_id())
+                && net.connected_clients.contains(&remote_client_id())
+        }
+        NetMode::Client | NetMode::None => false,
+    };
+    if !players_connected || runtime.bootstrapped || existing_players.iter().next().is_some() {
         return;
     }
     let (Some(assets), Some(data)) = (assets, data) else {
@@ -303,11 +313,18 @@ fn host_bootstrap_match(
         PlayerSlot::P1,
         Vec3::new(-220.0, 0.0, 50.0),
     );
-    commands.entity(p1).insert((
+    let mut p1_entity = commands.entity(p1);
+    p1_entity.insert((
         build_player_replication(host_client_id()),
         BufferedCoopInput::default(),
-        LocalControlled,
     ));
+    if config.mode == NetMode::Host {
+        p1_entity.insert(LocalControlled);
+    } else {
+        p1_entity.insert(RemoteControlled {
+            client_id: host_client_id(),
+        });
+    }
 
     let p2 = spawn_coop_player(
         &mut commands,
@@ -344,6 +361,7 @@ fn host_bootstrap_match(
 }
 
 fn host_handle_pause_requests(
+    config: Res<CoopNetConfig>,
     local_input: Res<PlayerInputState>,
     net: Res<CoopNetState>,
     mut session_q: Query<&mut CoopSessionState, With<CoopSessionEntity>>,
@@ -355,9 +373,10 @@ fn host_handle_pause_requests(
         return;
     }
 
-    let host_pressed = local_input.pause_pressed;
-    let remote_pressed = latest_input_for(&net, remote_client_id()).pause_pressed;
-    if !(host_pressed || remote_pressed) {
+    let p1_pressed = latest_input_for(&net, host_client_id()).pause_pressed;
+    let p2_pressed = latest_input_for(&net, remote_client_id()).pause_pressed;
+    let host_pressed = (config.mode == NetMode::Host && local_input.pause_pressed) || p1_pressed;
+    if !(host_pressed || p2_pressed) {
         return;
     }
 
@@ -380,9 +399,11 @@ fn host_buffer_player_inputs(
     net.host_frame_counter = net.host_frame_counter.wrapping_add(1);
 
     for (slot, mut buffered, mut drive) in &mut players {
-        let input = match slot {
-            PlayerSlot::P1 => build_input_state(&local_input),
-            PlayerSlot::P2 => {
+        let input = {
+            let client_id = slot_client_id(*slot);
+            if Some(client_id) == net.local_client_id {
+                build_input_state(&local_input)
+            } else {
                 let mut inp = latest_input_for(&net, slot_client_id(*slot));
                 // 检查输入是否过期：超过 3 帧没收到新包则清零持续量，
                 // 防止丢包时角色用旧的 move_axis 无限滑行
@@ -421,8 +442,9 @@ fn host_buffer_player_inputs(
             menu_cancel_pressed: input.menu_cancel_pressed,
         };
         // 消费边缘事件后清除，防止跨帧重复触发
-        if *slot == PlayerSlot::P2
-            && let Some(stored) = net.latest_inputs.get_mut(&slot_client_id(PlayerSlot::P2))
+        let client_id = slot_client_id(*slot);
+        if Some(client_id) != net.local_client_id
+            && let Some(stored) = net.latest_inputs.get_mut(&client_id)
         {
             stored.clear_edge_events();
         }
@@ -846,6 +868,7 @@ fn host_handle_shop_exit_inputs(
 }
 
 fn host_handle_door_interactions(
+    time: Res<Time>,
     mut runtime: ResMut<CoopRuntimeState>,
     layout: Option<Res<FloorLayout>>,
     mut current_room: Option<ResMut<CurrentRoom>>,
@@ -892,6 +915,7 @@ fn host_handle_door_interactions(
 
     let mut p1_choice = session.door_choice.p1_choice;
     let mut p2_choice = session.door_choice.p2_choice;
+    let had_pending_choice = p1_choice.is_some() ^ p2_choice.is_some();
 
     let living_slots = {
         let players = player_queries.p0();
@@ -910,8 +934,15 @@ fn host_handle_door_interactions(
             for (index, (dir, _)) in room.connections.exits.iter().enumerate() {
                 if player_pos.distance(door_world_position(*dir)) <= DOOR_INTERACT_RANGE {
                     match slot {
-                        PlayerSlot::P1 => p1_choice = Some(index as u8),
-                        PlayerSlot::P2 => p2_choice = Some(index as u8),
+                        PlayerSlot::P1 if p1_choice != Some(index as u8) => {
+                            p1_choice = Some(index as u8);
+                            session.door_choice.input_timeout_s = COOP_DOOR_CONFIRM_TIMEOUT_S;
+                        }
+                        PlayerSlot::P2 if p2_choice != Some(index as u8) => {
+                            p2_choice = Some(index as u8);
+                            session.door_choice.input_timeout_s = COOP_DOOR_CONFIRM_TIMEOUT_S;
+                        }
+                        _ => {}
                     }
                     break;
                 }
@@ -974,6 +1005,20 @@ fn host_handle_door_interactions(
                 } else {
                     session.phase = CoopPhase::Rps;
                     session.rps = default_rps_state();
+                }
+            } else if p1_choice.is_some() || p2_choice.is_some() {
+                if !had_pending_choice {
+                    session.door_choice.input_timeout_s = COOP_DOOR_CONFIRM_TIMEOUT_S;
+                } else {
+                    session.door_choice.input_timeout_s =
+                        (session.door_choice.input_timeout_s - time.delta_seconds()).max(0.0);
+                }
+                if session.door_choice.input_timeout_s <= 0.0 {
+                    session.door_choice.p1_choice = None;
+                    session.door_choice.p2_choice = None;
+                    session.door_choice.chooser = None;
+                    session.door_choice.input_timeout_s = COOP_DOOR_CONFIRM_TIMEOUT_S;
+                    session.phase = CoopPhase::None;
                 }
             }
         }
@@ -1268,7 +1313,7 @@ fn host_broadcast_damage_events(
     mut ev: EventReader<DamageAppliedEvent>,
     mut connection: ResMut<LyServerConnectionManager>,
 ) {
-    if config.mode != NetMode::Host || !net.remote_connected {
+    if !matches!(config.mode, NetMode::Host | NetMode::Server) || net.connected_clients.is_empty() {
         ev.clear();
         return;
     }
@@ -1293,11 +1338,43 @@ fn host_cleanup_disconnected_session(
     session_q: Query<&CoopSessionState, With<CoopSessionEntity>>,
     mut flow: ResMut<CoopSessionFlow>,
 ) {
-    if config.mode == NetMode::Host && runtime.bootstrapped && !net.remote_connected {
+    let disconnected = match config.mode {
+        NetMode::Host => {
+            !net.remote_connected
+                || input_timed_out(
+                    &net,
+                    remote_client_id(),
+                    COOP_INPUT_DISCONNECT_TIMEOUT_FRAMES,
+                )
+        }
+        NetMode::Server => {
+            !(net.connected_clients.contains(&host_client_id())
+                && net.connected_clients.contains(&remote_client_id()))
+                || input_timed_out(&net, host_client_id(), COOP_INPUT_DISCONNECT_TIMEOUT_FRAMES)
+                || input_timed_out(
+                    &net,
+                    remote_client_id(),
+                    COOP_INPUT_DISCONNECT_TIMEOUT_FRAMES,
+                )
+        }
+        NetMode::Client | NetMode::None => false,
+    };
+    if runtime.bootstrapped && disconnected {
         let ended_match = session_q
             .get_single()
             .map(|session| session.match_over)
             .unwrap_or(false);
+        if config.mode == NetMode::Server {
+            queue_exit_request(
+                &mut flow,
+                CoopExitRequest {
+                    destination: CoopExitDestination::Lobby,
+                    notice: Some("Session ended; server is waiting for new clients.".to_string()),
+                    preserve_mode: true,
+                },
+            );
+            return;
+        }
         queue_exit_request(
             &mut flow,
             CoopExitRequest {
@@ -1313,11 +1390,15 @@ fn host_cleanup_disconnected_session(
     }
 }
 
+fn input_timed_out(net: &CoopNetState, client_id: ClientId, timeout_frames: u32) -> bool {
+    let Some(last_frame) = net.latest_input_ticks.get(&client_id).copied() else {
+        return net.host_frame_counter > timeout_frames;
+    };
+    net.host_frame_counter.wrapping_sub(last_frame) > timeout_frames
+}
+
 fn slot_client_id(slot: PlayerSlot) -> ClientId {
-    match slot {
-        PlayerSlot::P1 => host_client_id(),
-        PlayerSlot::P2 => remote_client_id(),
-    }
+    client_id_for_slot(slot)
 }
 
 fn slot_index(slot: PlayerSlot) -> usize {
@@ -1418,6 +1499,7 @@ fn default_door_choice_state() -> super::components::DoorChoiceState {
         options: Vec::new(),
         p1_choice: None,
         p2_choice: None,
+        input_timeout_s: COOP_DOOR_CONFIRM_TIMEOUT_S,
     }
 }
 

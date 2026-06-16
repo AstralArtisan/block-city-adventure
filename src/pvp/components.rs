@@ -32,6 +32,7 @@ impl Default for PvpLives {
 pub struct PvpCooldowns {
     pub melee: Timer,
     pub ranged: Timer,
+    pub dash: Timer,
     pub respawn: Timer,
 }
 
@@ -40,6 +41,7 @@ impl PvpCooldowns {
         Self {
             melee: Timer::from_seconds(0.35, TimerMode::Once),
             ranged: Timer::from_seconds(0.45, TimerMode::Once),
+            dash: Timer::from_seconds(0.95, TimerMode::Once),
             respawn: Timer::from_seconds(0.0, TimerMode::Once),
         }
     }

@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 
-use crate::constants::{ROOM_HALF_HEIGHT, ROOM_HALF_WIDTH, UI_Z};
+use crate::constants::{ROOM_HALF_HEIGHT, ROOM_HALF_WIDTH};
 use crate::core::assets::GameAssets;
 use crate::core::input::PlayerInputState;
+use crate::gameplay::player::combat::MeleeSlashEffect;
 use crate::gameplay::player::components::{Health, Velocity};
 use crate::states::AppState;
 use crate::ui::widgets;
@@ -11,6 +12,18 @@ use super::components::*;
 use super::net::{
     NetMode, PvpFireMsg, PvpInputMsg, PvpNetConfig, PvpNetState, PvpPlayerStateMsg, PvpStateMsg,
 };
+
+const PVP_PLAYER_SIZE: Vec2 = Vec2::new(54.0, 54.0);
+const PVP_PLAYER_MAX_HP: f32 = 100.0;
+const PVP_MOVE_SPEED: f32 = 310.0;
+const PVP_MELEE_RANGE: f32 = 118.0;
+const PVP_MELEE_DAMAGE: f32 = 22.0;
+const PVP_RANGED_RANGE: f32 = 560.0;
+const PVP_PROJECTILE_SPEED: f32 = 720.0;
+const PVP_DASH_DISTANCE: f32 = 142.0;
+const PVP_EFFECT_Z: f32 = 59.0;
+const PVP_MELEE_SLASH_EFFECT_LIFETIME_S: f32 = 0.18;
+const PVP_SLASH_FRAME_COUNT: usize = 9;
 
 #[derive(Resource, Debug, Default)]
 pub struct PvpMatchState {
@@ -36,6 +49,16 @@ pub struct PvpHudUi;
 
 #[derive(Component)]
 pub struct PvpHudText;
+
+#[derive(Component)]
+pub struct PvpHudHealthFill {
+    player_id: u8,
+}
+
+#[derive(Component)]
+pub struct PvpHudStatsText {
+    player_id: u8,
+}
 
 pub fn reset_pvp_runtime(
     mut commands: Commands,
@@ -91,14 +114,19 @@ pub fn setup_pvp_game(
             root.spawn(NodeBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(16.0),
-                    top: Val::Px(12.0),
+                    left: Val::Px(28.0),
+                    right: Val::Px(28.0),
+                    top: Val::Px(14.0),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::FlexStart,
                     ..default()
                 },
                 ..default()
             })
-            .with_children(|col| {
-                col.spawn((widgets::title_text(&assets, "PVP", 18.0), PvpHudText));
+            .with_children(|row| {
+                spawn_pvp_hud_card(row, &assets, 1, "P1", "左侧玩家");
+                row.spawn(widgets::title_text(&assets, "PVP", 20.0));
+                spawn_pvp_hud_card(row, &assets, 2, "P2", "右侧玩家");
             });
         });
 
@@ -131,6 +159,46 @@ pub fn setup_pvp_game(
     spawn_players(&mut commands, &assets, net.my_id);
 }
 
+pub fn setup_pvp_headless_game(
+    mut commands: Commands,
+    mut match_state: ResMut<PvpMatchState>,
+    mut net: ResMut<PvpNetState>,
+    mut overlay: ResMut<PvpOverlayState>,
+) {
+    match_state.tick = 0;
+    match_state.state_send_timer = Timer::from_seconds(1.0 / 30.0, TimerMode::Repeating);
+    net.clear_runtime();
+    overlay.pause_visible = false;
+
+    spawn_headless_player(&mut commands, 1, Vec2::new(-ROOM_HALF_WIDTH * 0.55, 0.0));
+    spawn_headless_player(&mut commands, 2, Vec2::new(ROOM_HALF_WIDTH * 0.55, 0.0));
+}
+
+fn spawn_headless_player(commands: &mut Commands, id: u8, pos: Vec2) -> Entity {
+    commands
+        .spawn((
+            PvpEntity,
+            PvpPlayerId(id),
+            Transform::from_translation(pos.extend(50.0)),
+            GlobalTransform::default(),
+            Velocity::default(),
+            Health {
+                current: PVP_PLAYER_MAX_HP,
+                max: PVP_PLAYER_MAX_HP,
+            },
+            PvpLives::default(),
+            PvpCooldowns::new(),
+            PvpNetTarget {
+                pos,
+                hp: PVP_PLAYER_MAX_HP,
+                lives: 3,
+            },
+            PvpMeleeFlash::default(),
+            Name::new(format!("PvpHeadlessPlayer{id}")),
+        ))
+        .id()
+}
+
 fn pvp_player_color(player_id: u8, flash: bool) -> Color {
     if flash {
         Color::srgb(1.0, 0.98, 0.92)
@@ -141,20 +209,97 @@ fn pvp_player_color(player_id: u8, flash: bool) -> Color {
     }
 }
 
+fn pvp_player_tint(player_id: u8, flash: bool) -> Color {
+    if flash {
+        Color::srgb(1.0, 0.98, 0.92)
+    } else if player_id == 1 {
+        Color::srgb(0.82, 0.96, 1.0)
+    } else {
+        Color::srgb(1.0, 0.82, 0.76)
+    }
+}
+
+fn pvp_health_color(player_id: u8) -> Color {
+    if player_id == 1 {
+        Color::srgb(0.22, 0.72, 0.95)
+    } else {
+        Color::srgb(0.95, 0.36, 0.24)
+    }
+}
+
+fn spawn_pvp_hud_card(
+    parent: &mut ChildBuilder,
+    assets: &GameAssets,
+    id: u8,
+    label: &str,
+    subtitle: &str,
+) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Px(330.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                row_gap: Val::Px(7.0),
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.035, 0.045, 0.065, 0.88)),
+            border_color: BorderColor(pvp_health_color(id)),
+            ..default()
+        })
+        .with_children(|card| {
+            card.spawn(widgets::title_text(
+                assets,
+                format!("{label}  {subtitle}"),
+                18.0,
+            ));
+            card.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(16.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.02, 0.025, 0.035, 0.92)),
+                border_color: BorderColor(Color::srgba(0.80, 0.86, 0.95, 0.22)),
+                ..default()
+            })
+            .with_children(|bar| {
+                bar.spawn((
+                    NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(pvp_health_color(id)),
+                        ..default()
+                    },
+                    PvpHudHealthFill { player_id: id },
+                ));
+            });
+            card.spawn((
+                widgets::muted_text(assets, "HP 100 / 100    Lives 3", 15.0),
+                PvpHudStatsText { player_id: id },
+            ));
+        });
+}
+
 fn spawn_players(commands: &mut Commands, assets: &GameAssets, my_id: Option<u8>) {
     let p1 = spawn_one_player(
         commands,
         assets,
         1,
         Vec2::new(-ROOM_HALF_WIDTH * 0.55, 0.0),
-        pvp_player_color(1, false),
+        pvp_player_tint(1, false),
     );
     let p2 = spawn_one_player(
         commands,
         assets,
         2,
         Vec2::new(ROOM_HALF_WIDTH * 0.55, 0.0),
-        pvp_player_color(2, false),
+        pvp_player_tint(2, false),
     );
 
     if my_id == Some(1) {
@@ -176,11 +321,12 @@ fn spawn_one_player(
     commands
         .spawn((
             SpriteBundle {
-                texture: assets.textures.white.clone(),
+                texture: assets.textures.player.clone(),
                 transform: Transform::from_translation(pos.extend(50.0)),
                 sprite: Sprite {
                     color,
-                    custom_size: Some(Vec2::splat(34.0)),
+                    custom_size: Some(PVP_PLAYER_SIZE),
+                    flip_x: id == 2,
                     ..default()
                 },
                 ..default()
@@ -189,14 +335,14 @@ fn spawn_one_player(
             PvpPlayerId(id),
             Velocity::default(),
             Health {
-                current: 100.0,
-                max: 100.0,
+                current: PVP_PLAYER_MAX_HP,
+                max: PVP_PLAYER_MAX_HP,
             },
             PvpLives::default(),
             PvpCooldowns::new(),
             PvpNetTarget {
                 pos,
-                hp: 100.0,
+                hp: PVP_PLAYER_MAX_HP,
                 lives: 3,
             },
             PvpMeleeFlash::default(),
@@ -236,8 +382,9 @@ pub fn pvp_send_local_input_system(
         let aim = input.aim_world.unwrap_or(Vec2::ZERO);
         PvpInputMsg {
             move_axis: (input.move_axis.x, input.move_axis.y),
-            melee: input.attack_pressed,
+            melee: input.attack_pressed || input.attack_held,
             ranged: input.ranged_pressed,
+            dash: input.dash_pressed,
             aim: (aim.x, aim.y),
         }
     };
@@ -270,23 +417,30 @@ pub fn pvp_host_simulation_system(
         &mut PvpCooldowns,
     )>,
 ) {
-    if config.mode != NetMode::Host || !net.connected {
+    if !matches!(config.mode, NetMode::Host | NetMode::Server) || !net.connected {
         return;
     }
     match_state.ensure_init();
     match_state.tick = match_state.tick.wrapping_add(1);
 
-    let client_input = net.client_input();
+    let client_input = if config.mode == NetMode::Server {
+        net.input_for_player(2)
+    } else {
+        net.client_input()
+    };
 
     // Host input (player 1).
-    let host_input = if overlay.pause_visible {
+    let host_input = if config.mode == NetMode::Server {
+        net.input_for_player(1)
+    } else if overlay.pause_visible {
         PvpInputMsg::default()
     } else {
         let host_aim = input.aim_world.unwrap_or(Vec2::ZERO);
         PvpInputMsg {
             move_axis: (input.move_axis.x, input.move_axis.y),
-            melee: input.attack_pressed,
+            melee: input.attack_pressed || input.attack_held,
             ranged: input.ranged_pressed,
+            dash: input.dash_pressed,
             aim: (host_aim.x, host_aim.y),
         }
     };
@@ -295,6 +449,7 @@ pub fn pvp_host_simulation_system(
     for (id, mut tf, mut vel, _hp, _lives, mut cds) in &mut players {
         cds.melee.tick(time.delta());
         cds.ranged.tick(time.delta());
+        cds.dash.tick(time.delta());
         cds.respawn.tick(time.delta());
 
         if !cds.respawn.finished() {
@@ -302,13 +457,16 @@ pub fn pvp_host_simulation_system(
             continue;
         }
 
-        let axis = if id.0 == 1 {
-            Vec2::new(host_input.move_axis.0, host_input.move_axis.1)
-        } else {
-            Vec2::new(client_input.move_axis.0, client_input.move_axis.1)
-        };
-        let speed = 310.0;
-        vel.0 = axis * speed;
+        let player_input = if id.0 == 1 { host_input } else { client_input };
+        if player_input.dash && cds.dash.finished() {
+            let dir = pvp_dash_direction(player_input, tf.translation.truncate());
+            tf.translation += (dir * PVP_DASH_DISTANCE).extend(0.0);
+            clamp_to_arena(&mut tf);
+            cds.dash.reset();
+        }
+
+        let axis = Vec2::new(player_input.move_axis.0, player_input.move_axis.1);
+        vel.0 = axis * PVP_MOVE_SPEED;
         tf.translation += (vel.0 * time.delta_seconds()).extend(0.0);
         clamp_to_arena(&mut tf);
     }
@@ -367,10 +525,10 @@ fn resolve_attacks(
 
     // Melee: short range, higher damage.
     if host_input.melee && p1_alive {
-        try_melee(1, 2, p1_pos, p2_pos, players);
+        try_melee(1, 2, p1_pos, p2_pos, host_input, players, net);
     }
     if client_input.melee && p2_alive {
-        try_melee(2, 1, p2_pos, p1_pos, players);
+        try_melee(2, 1, p2_pos, p1_pos, client_input, players, net);
     }
 
     // Ranged: hitscan + bullet visual.
@@ -443,6 +601,7 @@ fn try_melee(
     target: u8,
     attacker_pos: Vec2,
     target_pos: Vec2,
+    input: PvpInputMsg,
     players: &mut Query<(
         &PvpPlayerId,
         &mut Transform,
@@ -451,12 +610,8 @@ fn try_melee(
         &mut PvpLives,
         &mut PvpCooldowns,
     )>,
+    net: &mut PvpNetState,
 ) {
-    let range = 54.0;
-    if attacker_pos.distance(target_pos) > range {
-        return;
-    }
-
     let mut can = false;
     for (id, _tf, _vel, _hp, _lives, cds) in players.iter_mut() {
         if id.0 == attacker && cds.melee.finished() && cds.respawn.finished() {
@@ -474,12 +629,24 @@ fn try_melee(
         }
     }
 
-    let dir = (target_pos - attacker_pos)
-        .try_normalize()
-        .unwrap_or(Vec2::X);
+    let dir = pvp_melee_direction(input, attacker_pos, target_pos);
+    let fire = PvpFireMsg {
+        shooter_id: attacker,
+        origin: (attacker_pos.x, attacker_pos.y),
+        dir: (dir.x, dir.y),
+        melee: true,
+    };
+    net.fire_events.push(fire);
+    net.send_fire(fire);
+
+    let to_target = target_pos - attacker_pos;
+    if to_target.length() > PVP_MELEE_RANGE {
+        return;
+    }
+
     for (id, _tf, mut vel, mut hp, _lives, _cds) in players.iter_mut() {
         if id.0 == target {
-            hp.current = (hp.current - 18.0).max(0.0);
+            hp.current = (hp.current - PVP_MELEE_DAMAGE).max(0.0);
             vel.0 += dir * 420.0;
         }
     }
@@ -524,14 +691,14 @@ fn try_ranged(
         shooter_id: attacker,
         origin: (attacker_pos.x, attacker_pos.y),
         dir: (dir.x, dir.y),
+        melee: false,
     };
     net.fire_events.push(fire);
     net.send_fire(fire);
 
     // Hitscan: if target is close to ray.
-    let max_range = 560.0;
     let to_target = target_pos - attacker_pos;
-    if to_target.length() > max_range {
+    if to_target.length() > PVP_RANGED_RANGE {
         return;
     }
     let proj = to_target.dot(dir);
@@ -597,6 +764,25 @@ fn clamp_to_arena(tf: &mut Transform) {
     let half = Vec2::new(ROOM_HALF_WIDTH - 26.0, ROOM_HALF_HEIGHT - 26.0);
     tf.translation.x = tf.translation.x.clamp(-half.x, half.x);
     tf.translation.y = tf.translation.y.clamp(-half.y, half.y);
+}
+
+fn pvp_dash_direction(input: PvpInputMsg, current_pos: Vec2) -> Vec2 {
+    let axis = Vec2::new(input.move_axis.0, input.move_axis.1);
+    if axis.length_squared() > 0.01 {
+        return axis.normalize();
+    }
+    let aim = Vec2::new(input.aim.0, input.aim.1);
+    (aim - current_pos).try_normalize().unwrap_or(Vec2::X)
+}
+
+fn pvp_melee_direction(input: PvpInputMsg, attacker_pos: Vec2, target_pos: Vec2) -> Vec2 {
+    let aim = Vec2::new(input.aim.0, input.aim.1);
+    if let Some(dir) = (aim - attacker_pos).try_normalize() {
+        return dir;
+    }
+    (target_pos - attacker_pos)
+        .try_normalize()
+        .unwrap_or(Vec2::X)
 }
 
 fn build_state_msg(
@@ -707,17 +893,35 @@ pub fn pvp_client_local_prediction_system(
 
     cds.melee.tick(time.delta());
     cds.ranged.tick(time.delta());
+    cds.dash.tick(time.delta());
     if overlay.pause_visible || !cds.respawn.finished() {
         vel.0 = Vec2::ZERO;
         return;
     }
 
     let axis = input.move_axis;
-    vel.0 = axis * 310.0;
+    if input.dash_pressed && cds.dash.finished() {
+        let aim = input
+            .aim_world
+            .unwrap_or(tf.translation.truncate() + Vec2::X);
+        let dash_input = PvpInputMsg {
+            move_axis: (axis.x, axis.y),
+            melee: false,
+            ranged: false,
+            dash: true,
+            aim: (aim.x, aim.y),
+        };
+        let dir = pvp_dash_direction(dash_input, tf.translation.truncate());
+        tf.translation += (dir * PVP_DASH_DISTANCE).extend(0.0);
+        clamp_to_arena(&mut tf);
+        cds.dash.reset();
+    }
+
+    vel.0 = axis * PVP_MOVE_SPEED;
     tf.translation += (vel.0 * time.delta_seconds()).extend(0.0);
     clamp_to_arena(&mut tf);
 
-    if input.attack_pressed && cds.melee.finished() {
+    if (input.attack_pressed || input.attack_held) && cds.melee.finished() {
         cds.melee.reset();
     }
 }
@@ -769,7 +973,8 @@ pub fn pvp_update_player_visuals_system(
         flash.timer.tick(time.delta());
         let is_flashing =
             !flash.timer.finished() || (!cds.melee.finished() && cds.melee.elapsed_secs() < 0.12);
-        sprite.color = pvp_player_color(id.0, is_flashing);
+        sprite.color = pvp_player_tint(id.0, is_flashing);
+        sprite.flip_x = id.0 == 2;
     }
 }
 
@@ -787,35 +992,84 @@ pub fn pvp_bullet_visual_system(
         let dir = Vec2::new(ev.dir.0, ev.dir.1)
             .try_normalize()
             .unwrap_or(Vec2::X);
-        spawn_bullet_visual(&mut commands, &assets, ev.shooter_id, origin, dir);
+        if ev.melee {
+            spawn_melee_visual(&mut commands, &assets, ev.shooter_id, origin, dir);
+        } else {
+            spawn_bullet_visual(&mut commands, &assets, ev.shooter_id, origin, dir);
+        }
     }
 }
 
 fn spawn_bullet_visual(
     commands: &mut Commands,
     assets: &GameAssets,
-    shooter_id: u8,
+    _shooter_id: u8,
     origin: Vec2,
     dir: Vec2,
 ) {
-    let speed = 860.0;
     commands.spawn((
         SpriteBundle {
             texture: assets.textures.white.clone(),
-            transform: Transform::from_translation((origin + dir * 22.0).extend(UI_Z - 20.0)),
+            transform: Transform {
+                translation: (origin + dir * 22.0).extend(PVP_EFFECT_Z),
+                rotation: Quat::from_rotation_z(dir.y.atan2(dir.x)),
+                ..default()
+            },
             sprite: Sprite {
-                color: pvp_player_color(shooter_id, false).with_alpha(0.92),
-                custom_size: Some(Vec2::new(10.0, 4.0)),
+                color: Color::srgb(0.18, 0.92, 1.0),
+                custom_size: Some(Vec2::new(18.0, 8.0)),
                 ..default()
             },
             ..default()
         },
         PvpEntity,
         PvpBullet {
-            velocity: dir * speed,
+            velocity: dir * PVP_PROJECTILE_SPEED,
         },
-        crate::gameplay::combat::components::Lifetime(Timer::from_seconds(0.25, TimerMode::Once)),
-        Name::new("PvpBullet"),
+        crate::gameplay::combat::components::Lifetime(Timer::from_seconds(
+            PVP_RANGED_RANGE / PVP_PROJECTILE_SPEED,
+            TimerMode::Once,
+        )),
+        Name::new("PvpPlayerProjectile"),
+    ));
+}
+
+fn spawn_melee_visual(
+    commands: &mut Commands,
+    assets: &GameAssets,
+    shooter_id: u8,
+    origin: Vec2,
+    dir: Vec2,
+) {
+    let angle = dir.y.atan2(dir.x);
+    let reach = PVP_MELEE_RANGE;
+    commands.spawn((
+        SpriteBundle {
+            texture: assets.textures.slash.clone(),
+            transform: Transform {
+                translation: (origin + dir * (reach * 0.42)).extend(PVP_EFFECT_Z),
+                rotation: Quat::from_rotation_z(angle),
+                scale: Vec3::ONE,
+            },
+            sprite: Sprite {
+                color: pvp_player_color(shooter_id, true).with_alpha(0.92),
+                custom_size: Some(Vec2::new(reach * 1.22, 72.0)),
+                ..default()
+            },
+            ..default()
+        },
+        TextureAtlas {
+            layout: assets.textures.slash_layout.clone(),
+            index: 0,
+        },
+        MeleeSlashEffect {
+            timer: Timer::from_seconds(PVP_MELEE_SLASH_EFFECT_LIFETIME_S, TimerMode::Once),
+            base_alpha: 0.92,
+            base_scale: Vec3::ONE,
+            frame_count: PVP_SLASH_FRAME_COUNT,
+        },
+        PvpEntity,
+        Name::new("PvpMeleeSlash"),
     ));
 }
 
@@ -876,7 +1130,8 @@ pub fn pvp_bullet_visual_system_move_and_despawn(
     }
 }
 
-pub fn pvp_update_hud_system(
+#[allow(dead_code)]
+pub fn pvp_update_hud_text_system_old(
     net: Res<PvpNetState>,
     players: Query<(&PvpPlayerId, &Health, &PvpLives)>,
     mut text_q: Query<&mut Text, With<PvpHudText>>,
@@ -902,4 +1157,51 @@ pub fn pvp_update_hud_system(
         "PVP（你是P{me}）  P1: HP {:.0} / Lives {}    P2: HP {:.0} / Lives {}",
         p1.0, p1.1, p2.0, p2.1
     );
+}
+
+pub fn pvp_update_hud_system(
+    net: Res<PvpNetState>,
+    players: Query<(&PvpPlayerId, &Health, &PvpLives)>,
+    mut fill_q: Query<(&PvpHudHealthFill, &mut Style)>,
+    mut stats_q: Query<(&PvpHudStatsText, &mut Text)>,
+) {
+    let mut p1 = None;
+    let mut p2 = None;
+    for (id, hp, lives) in &players {
+        if id.0 == 1 {
+            p1 = Some((hp.current, hp.max, lives.lives));
+        } else if id.0 == 2 {
+            p2 = Some((hp.current, hp.max, lives.lives));
+        }
+    }
+    let me = net.my_id.unwrap_or(0);
+
+    for (fill, mut style) in &mut fill_q {
+        let Some((current, max, _lives)) = (if fill.player_id == 1 { p1 } else { p2 }) else {
+            continue;
+        };
+        let pct = if max > 0.0 {
+            (current / max).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        style.width = Val::Percent(pct * 100.0);
+    }
+
+    for (stats, mut text) in &mut stats_q {
+        let Some((current, max, lives)) = (if stats.player_id == 1 { p1 } else { p2 }) else {
+            continue;
+        };
+        let marker = if me == stats.player_id {
+            "你"
+        } else {
+            "对手"
+        };
+        text.sections[0].value = format!(
+            "{marker}    HP {:.0} / {:.0}    Lives {}",
+            current.max(0.0),
+            max,
+            lives
+        );
+    }
 }
