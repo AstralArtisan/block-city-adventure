@@ -1,7 +1,7 @@
 # 迭代经历与设计演化
 
-- 适用版本：`main` 分支（HEAD `a4b3f671`）
-- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
+- 适用版本：`main` 分支（HEAD `16cda9ea`）
+- 最后校验：2026-06-16；`cargo check` / `cargo clippy --all-targets` 通过，`cargo test` 89 项通过
 - 关联源码：`git log`、`src/`、`docs/superpowers/specs/`（设计规格文档）
 - 实验性内容：包含。联机相关阶段记录的是“原型整合”而非稳定版本发布
 
@@ -1104,3 +1104,40 @@ PR10 的 Claude Code Review action 成功完成，但 PR 页面没有任何 Clau
 
 **目的与动机：**
 蓄力射击操作收益不直观，替换为命中即爆的范围效果，强化远程 Build 的清群手感与正反馈。
+
+---
+
+## 2026-06-16 专用联机服务器与 client/server 二进制拆分（#14 → #15）
+
+**改动内容：**
+- 入口结构调整：删除 `src/main.rs`，改为 `src/lib.rs`（导出 `run_game` / `run_dedicated_server`）+ `src/bin/client.rs` + `src/bin/server.rs` 两个二进制；`Cargo.toml` 设 `default-run = "client"`，`cargo run` 仍等价于启动游戏客户端。
+- 无头专用服务器：新增 `DedicatedServerPlugin`，与 `GamePlugin` 共用 `configure_shared_game` 完成状态机/物理初始化。服务器用 `MinimalPlugins`（含 `ScheduleRunnerPlugin` 固定 60Hz）+ 手动挂 `LogPlugin/TransformPlugin/HierarchyPlugin/StatesPlugin`，无渲染/窗口/音频。
+- 无头占位插件：`PlaceholderAssetsPlugin`（提供默认 `GameAssets`，使带 `Sprite` 的实体在无头下也能 spawn 而不 panic）、`HeadlessDataPlugin`（`Startup` 加载 RON 配置）、`HeadlessUiSupportPlugin`（补齐 UI 系统依赖的事件类型）。
+- 两套网络栈新增 `NetMode::Server`：Coop（Lightyear，UDP 3457）与 PVP（自定义 UDP，3456）。服务器作为权威方但不占用玩家位——Coop 下两个槽位都标 `RemoteControlled`，PVP 下 `pvp_host_simulation_system` 把 P1/P2 都映射到网络输入。
+- 配套 `HeadlessCoopPlugin` / `HeadlessPvpPlugin`，仅注册模拟与网络系统，剥离 UI / 本地预测 / 渲染系统。
+- 敌人 HP 缩放扩展到 Server 模式（`matches!(mode, Host | Server)`，boss.rs 与 enemy/systems.rs 共 4 处）。
+- 部署设施：`deploy/linux/` 下 Linux 启动脚本（`run-server.sh`）、systemd 模板、环境变量样例、打包脚本（PowerShell）；文档 `docs/aliyun_linux_deploy.md`、`docs/client_server_startup.md`。
+- 新增窗口控制 UI `src/ui/window_controls.rs`（客户端最小化/最大化/关闭按钮）。
+
+**#15 针对评审反馈的修复：**
+- 还原客户端窗口标题为中文「勇闯方块城」（#14 误改为英文）。
+- 清除 3 个新增 clippy 告警（`or_else`→`or`、删冗余 `..default()`、`unwrap_or_else`→`unwrap_or`）。
+- PVP 收包处新增 `PvpInputMsg::has_finite_vectors()` 校验，丢弃含 `NaN/Inf` 的畸形输入包，避免位置被污染（公网服务器健壮性）。
+- 抽出 `PVP_PLAYER_MAX_HP` 常量，消除无头/有界面两处 spawn 的重复硬编码。
+
+**目的与动机：**
+此前联机只能由某个玩家充当 Host，要求其常驻在线且暴露公网地址。引入无头专用服务器后，可在云主机长期托管 Coop/PVP 房间，玩家以纯客户端连接，更接近真实联机部署形态。
+
+**关键决策：**
+- 不拆成多个独立程序，而是同一 codebase 通过插件组合区分客户端/服务器，最大化复用 `gameplay/` 共享玩法层。
+- 无头模式用占位资源而非条件编译，保持玩法系统签名一致、改动面最小。
+- PVP 仍是独立简化战斗（移速/伤害/HP 等仍为源码常量），本次未将其接入 augment/skills 或迁移到 RON——属既有设计债，不在本 PR 范围。
+
+**已知问题 / 后续工作：**
+- PVP 平衡数值应整体迁移到 RON（`PVP_MOVE_SPEED` 等仍硬编码）。
+- `input_timed_out`（`coop/runtime.rs`）在无输入记录时回退判定偏保守，当前被 `bootstrapped` 守卫挡住无实际影响，可后续改为显式 `false`。
+- 联机改动需在真实公网环境重测：客户端连 UDP 3456/3457、反复重连、单机/客户端基础启动流程。
+
+**验证：**
+- `cargo fmt --check` 通过；`cargo clippy --all-targets` 零告警；`cargo test` 89 项全部通过。
+- 实测 `server --coop-server --port 3457` 与 `server --pvp-server --port 3456` 均成功启动、无 panic。

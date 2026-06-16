@@ -1,9 +1,9 @@
 # 架构总览
 
 - 适用版本：`main` 分支
-- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
-- 源码文件数：110 个 Rust 源文件
-- 关联源码：`src/main.rs`、`src/app.rs`、`src/states.rs`、`src/core/`、`src/data/`、`src/gameplay/`、`src/coop/`、`src/pvp/`、`src/ui/`
+- 最后校验：2026-06-16；`cargo check --all-targets` / `cargo clippy --all-targets` 通过，`cargo test` 89 项通过
+- 源码文件数：113 个 Rust 源文件
+- 关联源码：`src/lib.rs`、`src/bin/client.rs`、`src/bin/server.rs`、`src/app.rs`、`src/states.rs`、`src/core/`、`src/data/`、`src/gameplay/`、`src/coop/`、`src/pvp/`、`src/ui/`
 - 实验性内容：包含。单机骨架稳定，联机部分仍为原型架构
 
 > [历史快照] 本文档前一版本基于 tag `saved-version-20260330-161713`（24 项测试）。以下内容已更新至当前代码状态。
@@ -26,11 +26,14 @@
 4. 配置、存档、成就等横切能力通过 `core/` 与 `data/` 提供。
 
 ## 2. 顶层装配
-`src/main.rs` 只负责创建 `App`、设置窗口和注册 `GamePlugin`。真正的系统拼装发生在 `src/app.rs`。
+入口自 #14 起拆为库 + 两个二进制：`src/lib.rs` 导出 `run_game`（客户端）与 `run_dedicated_server`（无头服务器），分别由 `src/bin/client.rs` 与 `src/bin/server.rs` 调用（`Cargo.toml` 设 `default-run = "client"`）。客户端注册 `GamePlugin`，无头服务器注册 `DedicatedServerPlugin`，二者共用 `configure_shared_game` 完成状态机/物理初始化。真正的系统拼装发生在 `src/app.rs`。
 
 ```mermaid
 flowchart TD
-    A["main.rs"] --> B["GamePlugin"]
+    A0["bin/client.rs"] --> A["lib::run_game"]
+    A1["bin/server.rs"] --> A2["lib::run_dedicated_server"]
+    A --> B["GamePlugin"]
+    A2 --> B2["DedicatedServerPlugin (无头占位插件 + HeadlessCoop/Pvp)"]
     B --> C["EventsPlugin"]
     B --> D["AssetsPlugin"]
     B --> E["DataPlugin"]
@@ -119,7 +122,7 @@ stateDiagram-v2
 
 | 层级 | 责任 | 典型目录 |
 | --- | --- | --- |
-| 启动/装配层 | App 创建、插件挂载、状态初始化 | `src/main.rs`、`src/app.rs`、`src/states.rs` |
+| 启动/装配层 | App 创建、插件挂载、状态初始化 | `src/lib.rs`、`src/bin/`、`src/app.rs`、`src/states.rs` |
 | 基础设施层 | 资源、输入、事件、音频、相机、存档、成就、本地联调 | `src/core/` |
 | 数据定义层 | 配置结构、加载器、全局注册表 | `src/data/` |
 | 玩法域层 | 地图、玩家、战斗、敌人、奖励、商店、解谜、成长、共享规则 | `src/gameplay/` |

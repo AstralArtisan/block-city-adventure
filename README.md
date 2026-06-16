@@ -5,9 +5,13 @@
 ## 快速开始
 
 ```bash
-cargo run            # 开发运行
+cargo run            # 开发运行（默认 client 二进制）
 cargo run --release  # 发布构建
-cargo test           # 83 个单元测试
+cargo test           # 89 个单元测试
+
+# 无头专用服务器（自 #14/#15）
+cargo run --bin server -- --coop-server --port 3457   # Coop
+cargo run --bin server -- --pvp-server  --port 3456   # PVP
 ```
 
 ## 操作
@@ -73,7 +77,10 @@ cargo test           # 83 个单元测试
 
 ```
 src/
-├── main.rs / app.rs     → 入口 + GamePlugin 装配
+├── lib.rs               → 入口库：run_game / run_dedicated_server
+├── bin/client.rs        → 游戏客户端二进制
+├── bin/server.rs        → 无头专用服务器二进制
+├── app.rs               → GamePlugin / DedicatedServerPlugin 装配
 ├── states.rs            → 两层状态机：AppState + GamePhase(SubStates)
 ├── core/                → 资源、输入、音频、相机、存档、成就
 ├── data/                → RON 配置加载 → GameDataRegistry
@@ -154,8 +161,9 @@ $env:LOCAL_NET_DEBUG=”1”; $env:LOCAL_NET_DEBUG_MODE=”pvp”; $env:LOCAL_NE
 
 ## 质量状态
 
-- `cargo check`：通过（3 个基线 audio dead-code 警告）
-- `cargo test`：83 项通过
-- 覆盖：XP 曲线、Boss 决策、奖励规则、商店逻辑、强化系统、敌人楼层池、角色面板、RON fallback 一致性
+- `cargo check --all-targets`：通过（client + server 两个二进制）
+- `cargo clippy --all-targets`：零告警
+- `cargo test`：89 项通过
+- 覆盖：XP 曲线、Boss 决策、奖励规则、商店逻辑、强化系统、敌人楼层池、角色面板、RON fallback 一致性、client/server 启动流程
 
 

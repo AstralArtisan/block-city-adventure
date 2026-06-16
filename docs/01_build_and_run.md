@@ -1,8 +1,8 @@
 # 构建与运行手册
 
-- 适用版本：当前工作树（HEAD `aa90cf3c`，tag `saved-version-20260330-161713`）
-- 最后校验：2026-03-31；`cargo check` 通过，`cargo test` 24 项通过
-- 关联源码：`Cargo.toml`、`src/main.rs`、`src/app.rs`、`src/core/assets.rs`、`src/core/local_debug.rs`、`src/core/save.rs`、`assets/configs/`
+- 适用版本：`main` 分支（HEAD `16cda9ea`）
+- 最后校验：2026-06-16；`cargo check --all-targets` / `cargo clippy --all-targets` 通过，`cargo test` 89 项通过
+- 关联源码：`Cargo.toml`、`src/lib.rs`、`src/bin/client.rs`、`src/bin/server.rs`、`src/app.rs`、`src/core/assets.rs`、`src/core/local_debug.rs`、`src/core/save.rs`、`assets/configs/`
 - 实验性内容：包含。本页涉及 `Coop` / `PVP` 联调说明，默认按原型环境书写
 
 ## 1. 运行环境
@@ -34,7 +34,7 @@
 `Loading` 状态会等待字体、玩家贴图和近战挥砍贴图完成加载，然后切入 `MainMenu`。
 
 ## 3. 基本命令
-开发运行：
+开发运行（默认启动游戏客户端，等价于 `cargo run --bin client`）：
 
 ```bash
 cargo run
@@ -46,10 +46,18 @@ cargo run
 cargo run --release
 ```
 
+启动无头专用服务器（自 #14/#15 起，详见 5.4）：
+
+```bash
+cargo run --bin server -- --coop-server --port 3457   # Coop 专用服务器
+cargo run --bin server -- --pvp-server  --port 3456   # PVP 专用服务器
+```
+
 编译检查：
 
 ```bash
-cargo check
+cargo check               # 默认 target
+cargo check --all-targets # 含 client / server 两个二进制
 ```
 
 测试：
@@ -58,7 +66,9 @@ cargo check
 cargo test
 ```
 
-当前文档基线下，`cargo test` 通过 24 个单元测试。
+当前文档基线下，`cargo test` 通过 89 个单元测试，`cargo clippy --all-targets` 零告警。
+
+> 入口结构：自 #14 起 `src/main.rs` 被拆为 `src/lib.rs`（导出 `run_game` / `run_dedicated_server`）+ `src/bin/client.rs` + `src/bin/server.rs`，`Cargo.toml` 设 `default-run = "client"`。
 
 ## 4. 首次启动后会发生什么
 1. `src/main.rs` 创建 `App`，设置窗口标题和清屏色。
@@ -100,6 +110,18 @@ cargo test
 - 端口：UDP `3456`
 - 协议消息：`Hello / Welcome / Input / State / Fire / Result`
 - Host 推进权威模拟，Client 做本地预测和状态应用
+
+### 5.4 无头专用服务器（#14/#15）
+`server` 二进制以无头模式作为权威方托管房间，自身不占用玩家位，玩家以纯客户端连接：
+
+```bash
+cargo run --bin server -- --coop-server --port 3457   # Coop（Lightyear）
+cargo run --bin server -- --pvp-server  --port 3456   # PVP（手写 UDP）
+```
+
+- 服务器走 `run_dedicated_server`（`MinimalPlugins` + 60Hz `ScheduleRunnerPlugin`），无渲染/窗口/音频，用占位资源插件保证玩法系统正常运行。
+- CLI 模式由 `src/core/local_debug.rs` 解析；亦可通过环境变量配置（见 `deploy/linux/server.env.example`）。
+- Linux 云部署（含 systemd、打包脚本、安全组放行）见 [`client_server_startup.md`](client_server_startup.md) 与 [`aliyun_linux_deploy.md`](aliyun_linux_deploy.md)。
 
 ## 6. 本地联调
 仓库当前不使用 `local_debug/*.ps1` 脚本。真实联调入口是 `src/core/local_debug.rs` 的 `LocalDebugPlugin`。

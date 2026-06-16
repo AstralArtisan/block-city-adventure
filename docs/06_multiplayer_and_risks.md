@@ -1,6 +1,6 @@
 # 多人架构与风险说明
 
-最后更新：2026-04-02
+最后更新：2026-06-16
 
 本页描述当前分支下多人联机的真实实现边界，重点覆盖 Coop。旧审计文档可以作为历史背景，但不应再作为当前修复计划的唯一依据。
 
@@ -107,3 +107,32 @@
 
 - `CoopNetState.latest_inputs` 中的持续量（`move_axis`、`held`）不再被视为"永远有效"，消费侧必须检查输入新鲜度
 - 重复的 Replicated Player 实体必须被 despawn 而非隐藏，避免 ECS 查询性能退化
+
+## 6. 无头专用服务器（2026-06-16，#14/#15）
+
+### 角色模型
+
+`NetMode` 新增 `Server` 变体（原有 `None/Host/Client`）。专用服务器是**权威方但不占用玩家位**：
+
+- **Coop**：`host_bootstrap_match` 在 Server 模式下两个玩家槽位都标 `RemoteControlled`（分别对应 `host_client_id` / `remote_client_id`），等两个客户端都连上才 bootstrap。`is_coop_authority` 对 `Host | Server` 同时为真。
+- **PVP**：`pvp_host_simulation_system` 在 Server 模式下把 P1/P2 都映射到 `net.input_for_player(1/2)`，不读本地 `PlayerInputState`。
+
+### 无头运行约束
+
+- 服务器入口 `run_dedicated_server`（`src/lib.rs`）用 `MinimalPlugins` + `ScheduleRunnerPlugin`（固定 60Hz），不挂渲染/窗口/音频。
+- `PlaceholderAssetsPlugin` 提供默认 `GameAssets`，保证带 `Sprite` 的实体在无头下也能 spawn 而不 panic；`HeadlessDataPlugin` 在 `Startup` 加载 RON；`HeadlessUiSupportPlugin` 补齐 UI 系统依赖的事件类型。
+- `HeadlessCoopPlugin` / `HeadlessPvpPlugin` 只注册模拟与网络系统，剥离 UI、本地预测、可视化系统。
+- 专用服务器初始 `AppState` 为 `MainMenu`（而非客户端的 `Loading`）。
+
+### 安全约束
+
+- PVP 收包处用 `PvpInputMsg::has_finite_vectors()` 丢弃含 `NaN/Inf` 的畸形输入包，防止位置被污染。
+- 云部署需在安全组/防火墙放行 UDP 3456（PVP）/ 3457（Coop）。
+
+### 剩余风险
+
+- PVP 平衡数值（`PVP_MOVE_SPEED` / `PVP_MELEE_DAMAGE` / `PVP_PLAYER_MAX_HP` 等）仍为源码常量，未迁移 RON。
+- `input_timed_out`（`coop/runtime.rs`）在无输入记录时回退判定偏保守，当前被 `bootstrapped` 守卫挡住无实际影响。
+- 联机全链路（公网连接、反复重连）需在真实环境重测。
+
+部署操作手册见 [`client_server_startup.md`](client_server_startup.md) 与 [`aliyun_linux_deploy.md`](aliyun_linux_deploy.md)。

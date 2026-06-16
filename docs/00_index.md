@@ -1,7 +1,7 @@
 # 工程交接文档索引
 
 - 适用版本：`main` 分支
-- 最后校验：2026-05-30；`cargo check` 通过，`cargo test` 83 项通过
+- 最后校验：2026-06-16；`cargo check --all-targets` / `cargo clippy --all-targets` 通过，`cargo test` 89 项通过
 - 关联源码：`README.md`、`src/`、`assets/configs/`、`docs/`
 
 本文档集面向工程交接与后续维护。帮助维护者快速搞清楚：
@@ -32,8 +32,10 @@
 | [`03_module_design.md`](03_module_design.md) | 模块职责与依赖 | 开发维护 |
 | [`04_api_and_data_model.md`](04_api_and_data_model.md) | 内部接口、数据模型 | 改功能前必看 |
 | [`05_iteration_history.md`](05_iteration_history.md) | 真实演化历史 | 追踪设计意图 |
-| [`06_multiplayer_and_risks.md`](06_multiplayer_and_risks.md) | 联机原型与技术债 | 联机维护者 |
+| [`06_multiplayer_and_risks.md`](06_multiplayer_and_risks.md) | 联机原型、专用服务器与技术债 | 联机维护者 |
 | [`07_extension_guide.md`](07_extension_guide.md) | 新增内容的改动路径 | 功能扩展者 |
+| [`client_server_startup.md`](client_server_startup.md) | client/server 二进制启动与连接流程 | 联机部署者 |
+| [`aliyun_linux_deploy.md`](aliyun_linux_deploy.md) | Linux 云主机专用服务器部署手册 | 运维/部署者 |
 | [`superpowers/specs/`](superpowers/specs/) | 设计规格文档（4-29 全面设计 + 增量修改计划） | 设计参考 |
 
 ## 设计规格文档
@@ -61,6 +63,6 @@
 
 - 主工程名：`block_city_adventure`
 - 关键依赖：Bevy 0.14.2、bevy_rapier2d 0.27、bevy_kira_audio 0.20、Lightyear 0.17.1
-- 源码文件：110 个 Rust 文件
-- 测试：83 项通过
+- 源码文件：113 个 Rust 文件
+- 测试：89 项通过
 - 复杂度热点：`src/coop/runtime.rs`、`src/gameplay/enemy/systems.rs`、`src/gameplay/session_core/mod.rs`、`src/ui/hud.rs`
